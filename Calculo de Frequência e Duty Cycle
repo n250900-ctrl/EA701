@@ -1,0 +1,86 @@
+import utime
+from machine import Pin, PWM
+# --- Definições de Pinagem ---
+PWM_OUTPUT_PIN = 0
+PWM_INPUT_PIN = 1 # Pino de leitura
+
+
+# --- Variáveis Globais para a Medição via Interrupção ---
+# Usamos 'micropython.native' para tornar a interrupção o mais rápida possível
+@micropython.native
+def measure_pwm_callback(pin):
+    """
+    Função de callback chamada a cada borda de subida e descida no pino de entrada.
+    Esta é a rotina de medição de alta precisão.
+    """
+    global last_edge_time, high_pulse_width, total_period
+   
+    current_time = utime.ticks_us()
+    time_diff = utime.ticks_diff(current_time, last_edge_time)
+   
+    # Se o pino agora está em nível BAIXO, significa que ocorreu uma borda de DESCIDA.
+    # O tempo que passou desde a última borda (que foi de subida) é a largura do pulso ALTO.
+    if pin.value() == 0:
+        high_pulse_width = time_diff
+    # Se o pino agora está em nível ALTO, significa que ocorreu uma borda de SUBIDA.
+    # O tempo que passou desde a última borda de subida é o período TOTAL da onda.
+    else:
+        total_period = time_diff
+       
+    last_edge_time = current_time
+
+
+# --- Inicialização ---
+
+
+# Variáveis para a medição
+last_edge_time = 0
+high_pulse_width = 0
+total_period = 0
+
+
+# Configura a saída PWM no GPIO0
+pwm_output = PWM(Pin(PWM_OUTPUT_PIN))
+pwm_output.freq(1000) # Frequência inicial de 1kHz
+pwm_output.duty_u16(32768) # Duty cycle inicial de 50%
+
+
+# Configura a entrada no GPIO1 para disparar uma interrupção em CADA transição de sinal
+pwm_input = Pin(PWM_INPUT_PIN, Pin.IN)
+pwm_input.irq(trigger=Pin.IRQ_RISING | Pin.IRQ_FALLING, handler=measure_pwm_callback)
+
+
+print("Programa iniciado. A gerar PWM no GPIO0 e a medir no GPIO1.")
+print("Os resultados serão impressos no console.")
+
+
+# --- Loop Principal ---
+# Este loop apenas varia o sinal gerado e atualiza o display.
+# A medição real acontece em segundo plano, através da interrupção.
+duty = 0
+duty_direction = 1
+while True:
+    # Varia o duty cycle de 0 a 100% e de volta para 0, lentamente
+    duty += duty_direction
+    if duty >= 100 or duty <= 0:
+        duty_direction *= -1
+   
+    # Converte a percentagem (0-100) para o valor u16 (0-65535) e aplica ao PWM
+    duty_u16 = int((duty / 100) * 65535)
+    pwm_output.duty_u16(duty_u16)
+
+
+    # --- Cálculo dos Valores Medidos ---
+    measured_freq = 0
+    measured_duty = 0
+    if total_period > 0:
+        # Frequência é 1 milhão dividido pelo período em microssegundos
+        measured_freq = 1000000 / total_period
+        # Duty cycle é a percentagem do tempo em nível alto em relação ao período total
+        measured_duty = (high_pulse_width / total_period) * 100
+
+
+    # --- Impressão dos Resultados no Console ---
+    print(f"Frequência Medida: {measured_freq:.1f} Hz | Duty Cycle Medido: {measured_duty:.1f} %")
+   
+    utime.sleep_ms(100)
