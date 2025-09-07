@@ -1,0 +1,121 @@
+from machine import Pin, PWM, I2C
+import utime
+
+
+# Se tiver um display OLED real, substitua a classe simulada pela biblioteca correta
+# from ssd1306 import SSD1306_I2C
+
+
+# --- Definições de Pinagem ---
+PWM_OUTPUT_PIN = 0
+PWM_INPUT_PIN = 1 # Alterado para GPIO1
+
+
+# Pinos para o display OLED I2C (exemplo, ajuste para a sua placa)
+OLED_SDA_PIN = 2
+OLED_SCL_PIN = 3
+
+
+# --- Classe de Simulação do Display OLED ---
+class OLED_Display:
+    def __init__(self, width, height, i2c):
+        print("--- Display OLED Simulado ---")
+        self.width = width
+        self.height = height
+        self.i2c = i2c
+
+
+    def fill(self, color):
+        pass
+
+
+    def text(self, line, x, y, color=1):
+        print(line)
+
+
+    def show(self):
+        print("---------------------------")
+
+
+# --- Variáveis Globais para a Medição via Interrupção ---
+last_edge_time = 0
+high_pulse_width = 0
+total_period = 0
+
+
+# --- Callback da Interrupção (Mede o sinal) ---
+def measure_pwm_callback(pin):
+    global last_edge_time, high_pulse_width, total_period
+   
+    current_time = utime.ticks_us()
+    time_diff = utime.ticks_diff(current_time, last_edge_time)
+   
+    if pin.value() == 0:  # Borda de descida
+        high_pulse_width = time_diff
+    else:  # Borda de subida
+        total_period = time_diff
+       
+    last_edge_time = current_time
+
+
+# --- Inicialização ---
+pwm_output = PWM(Pin(PWM_OUTPUT_PIN))
+pwm_input = Pin(PWM_INPUT_PIN, Pin.IN, Pin.PULL_DOWN)
+pwm_input.irq(trigger=Pin.IRQ_RISING | Pin.IRQ_FALLING, handler=measure_pwm_callback)
+
+
+oled = OLED_Display(128, 64, None) # Usando nosso simulador
+
+
+# --- Lista de Testes: (Frequência em Hz, Duty Cycle em %) ---
+testes = [
+    (100, 25), (100, 50), (100, 75),
+    (1000, 25), (1000, 50), (1000, 75),
+    (10000, 25), (10000, 50), (10000, 75)
+]
+teste_atual = 0
+
+
+# --- Loop Principal ---
+while True:
+    # Seleciona o teste atual da lista
+    freq_programada, duty_programado_percent = testes[teste_atual]
+   
+    # Converte o duty cycle de percentagem (0-100) para o valor u16 (0-65535)
+    duty_u16 = int((duty_programado_percent / 100) * 65535)
+   
+    # Configura a saída PWM
+    try:
+        pwm_output.freq(freq_programada)
+        pwm_output.duty_u16(duty_u16)
+    except ValueError:
+        pass # Ignora erros de frequência inválida
+
+
+    # Dá tempo para o sinal estabilizar e para a medição interna ser feita
+    utime.sleep_ms(500)
+
+
+    # --- Cálculo dos Valores Medidos ---
+    measured_freq = 0
+    measured_duty = 0
+    if total_period > 0:
+        measured_freq = 1000000 / total_period
+        measured_duty = (high_pulse_width / total_period) * 100
+
+
+    # --- Exibição dos Dados no OLED ---
+    oled.fill(0)
+    oled.text("Programado:", 0, 0)
+    oled.text(f" Freq: {freq_programada} Hz", 0, 10)
+    oled.text(f" Duty: {duty_programado_percent}%", 0, 20)
+   
+    oled.text("Medido (Pico):", 0, 35)
+    oled.text(f" Freq: {measured_freq:.0f} Hz", 0, 45)
+    oled.text(f" Duty: {measured_duty:.1f}%", 0, 55)
+    oled.show()
+
+
+    # Avança para o próximo teste a cada 5 segundos
+    utime.sleep(5)
+    teste_atual = (teste_atual + 1) % len(testes)
