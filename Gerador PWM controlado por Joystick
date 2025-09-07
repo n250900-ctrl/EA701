@@ -1,0 +1,97 @@
+import utime
+from machine import Pin, PWM, ADC
+# --- Definições de Pinagem ---
+PWM_OUTPUT_PIN = 0      # O pino que GERA o sinal PWM
+PWM_INPUT_PIN = 2       # O pino que VAI LER o sinal PWM
+
+
+JOYSTICK_X_PIN = 27
+JOYSTICK_Y_PIN = 26
+BUTTON_A_PIN = 14
+BUTTON_B_PIN = 15
+
+
+# --- Faixa de Frequência em Hz ---
+FREQ_MIN = 10
+FREQ_MAX = 10000
+
+
+# --- Inicialização dos Componentes ---
+
+
+# Saída PWM no GPIO0
+pwm_output = PWM(Pin(PWM_OUTPUT_PIN))
+
+
+# NOVA LINHA: Entrada digital no GPIO2 para ler o sinal
+pwm_input = Pin(PWM_INPUT_PIN, Pin.IN)
+
+
+# Entradas Analógicas (Joystick)
+adc_x = ADC(Pin(JOYSTICK_X_PIN))
+adc_y = ADC(Pin(JOYSTICK_Y_PIN))
+
+
+# Entradas Digitais (Botões)
+btn_a = Pin(BUTTON_A_PIN, Pin.IN, Pin.PULL_UP)
+btn_b = Pin(BUTTON_B_PIN, Pin.IN, Pin.PULL_UP)
+
+
+# --- Variáveis de Controlo ---
+current_duty_cycle = 0
+current_freq = FREQ_MIN
+last_press_time = 0
+DEBOUNCE_MS = 200
+
+
+# --- Função Auxiliar para Mapear Valores ---
+def map_value(x, in_min, in_max, out_min, out_max):
+    """Mapeia um valor de uma faixa para outra."""
+    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
+
+
+print("Programa de controlo e leitura de PWM iniciado.")
+print("Eixo X: Frequência | Eixo Y: Duty Cycle")
+
+
+# --- Loop Principal ---
+while True:
+    # --- Leitura do Joystick ---
+    duty_from_joystick = adc_y.read_u16()
+    current_duty_cycle = duty_from_joystick
+   
+    adc_x_val = adc_x.read_u16()
+    current_freq = int(map_value(adc_x_val, 0, 65535, FREQ_MIN, FREQ_MAX))
+
+
+    # --- Leitura dos Botões para Ajuste Fino ---
+    now = utime.ticks_ms()
+    if btn_a.value() == 0 and utime.ticks_diff(now, last_press_time) > DEBOUNCE_MS:
+        last_press_time = now
+        current_duty_cycle += 655 # Incrementa ~1%
+        if current_duty_cycle > 65535: current_duty_cycle = 65535
+           
+    if btn_b.value() == 0 and utime.ticks_diff(now, last_press_time) > DEBOUNCE_MS:
+        last_press_time = now
+        current_duty_cycle -= 655 # Decrementa ~1%
+        if current_duty_cycle < 0: current_duty_cycle = 0
+
+
+    # --- Aplica os Valores à Saída PWM ---
+    try:
+        pwm_output.freq(current_freq)
+        pwm_output.duty_u16(int(current_duty_cycle))
+    except ValueError:
+        pass
+
+
+    # --- NOVA LINHA: Lê o estado do pino de entrada ---
+    signal_value = pwm_input.value()
+
+
+    # --- Imprime o estado atual para depuração ---
+    duty_percent = (current_duty_cycle / 65535) * 100
+    # Modificado para incluir a leitura do pino 2
+    print(f"Freq: {current_freq:5d} Hz | Duty: {duty_percent:3.0f}% | Lendo GPIO2: {signal_value}")
+   
+    utime.sleep_ms(50)
