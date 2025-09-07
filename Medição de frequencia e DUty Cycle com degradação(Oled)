@@ -1,0 +1,114 @@
+from machine import Pin, PWM, I2C
+import utime
+
+
+# A biblioteca para o display OLED
+from ssd1306 import SSD1306_I2C
+
+
+# --- Definições de Pinagem ---
+PWM_OUTPUT_PIN = 0
+PWM_INPUT_PIN = 1
+
+
+# Pinos para o display OLED (ajustados para a sua placa)
+OLED_SDA_PIN = 2
+OLED_SCL_PIN = 3
+I2C_BUS = 1
+
+
+# --- Variáveis Globais para a Medição via Interrupção ---
+last_edge_time = 0
+high_pulse_width = 0
+total_period = 0
+
+
+# --- Callback da Interrupção (Mede o sinal) ---
+@micropython.native
+def measure_pwm_callback(pin):
+    global last_edge_time, high_pulse_width, total_period
+   
+    current_time = utime.ticks_us()
+    time_diff = utime.ticks_diff(current_time, last_edge_time)
+   
+    if pin.value() == 0:  # Borda de descida
+        high_pulse_width = time_diff
+    else:  # Borda de subida
+        total_period = time_diff
+       
+    last_edge_time = current_time
+
+
+# --- Inicialização ---
+pwm_output = PWM(Pin(PWM_OUTPUT_PIN))
+pwm_input = Pin(PWM_INPUT_PIN, Pin.IN)
+pwm_input.irq(trigger=Pin.IRQ_RISING | Pin.IRQ_FALLING, handler=measure_pwm_callback)
+
+
+# Inicializa o Display OLED
+try:
+    i2c = I2C(I2C_BUS, sda=Pin(OLED_SDA_PIN), scl=Pin(OLED_SCL_PIN), freq=400000)
+    oled = SSD1306_I2C(128, 64, i2c)
+    print("Display OLED inicializado.")
+except Exception as e:
+    print(f"Erro ao inicializar o OLED: {e}. Verifique os pinos e a biblioteca ssd1306.py")
+    oled = None
+
+
+# --- TABELA DE TESTES ---
+# Lista de tuplos: (Frequência em Hz, Duty Cycle em %)
+test_cases = [
+    (100, 25), (100, 50), (100, 75),
+    (1000, 25), (1000, 50), (1000, 75),
+    (10000, 25), (10000, 50), (10000, 75)
+]
+
+
+print("Iniciando ciclo de benchmark...")
+
+
+# --- Loop Principal ---
+while True:
+    # Itera sobre cada caso de teste da lista
+    for freq_programada, duty_programado_percent in test_cases:
+       
+        # Converte o duty cycle de percentagem (0-100) para o valor u16 (0-65535)
+        duty_u16 = int((duty_programado_percent / 100) * 65535)
+       
+        # Configura a saída PWM com os valores do teste atual
+        try:
+            pwm_output.freq(freq_programada)
+            pwm_output.duty_u16(duty_u16)
+        except ValueError:
+            pass
+
+
+        # Espera um pouco para a medição estabilizar
+        utime.sleep_ms(500)
+
+
+        # --- Cálculo dos Valores Medidos ---
+        measured_freq = 0
+        measured_duty = 0
+        if total_period > 0:
+            measured_freq = 1000000 / total_period
+            measured_duty = (high_pulse_width / total_period) * 100
+
+
+        # --- Exibição dos Dados ---
+        if oled:
+            oled.fill(0)
+            oled.text("Prog:", 0, 0)
+            oled.text(f"F:{freq_programada}Hz D:{duty_programado_percent}%", 0, 10)
+           
+            oled.text("Medido:", 0, 30)
+            oled.text(f"F:{measured_freq:.0f}Hz", 0, 40)
+            oled.text(f"D:{measured_duty:.1f}%", 0, 50)
+            oled.show()
+        else:
+            # Se o OLED falhar, imprime no console
+            print(f"Prog: {freq_programada}Hz, {duty_programado_percent}% -> Medido: {measured_freq:.0f}Hz, {measured_duty:.1f}%")
+
+
+        # Mantém cada teste no ecrã por 5 segundos antes de passar ao próximo
+        utime.sleep(5)
