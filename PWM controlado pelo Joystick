@@ -1,0 +1,126 @@
+import machine
+import time
+from ssd1306 import SSD1306_I2C # <--- LINHA ADICIONADA PARA CORRIGIR O ERRO
+
+
+# ======================================================================
+# --- CONFIGURAÇÃO ---
+# ======================================================================
+# Entradas Analógicas
+PINO_JOYSTICK_Y = 26
+PINO_JOYSTICK_X = 27
+
+
+# Saída PWM
+PINO_SAIDA_PWM = 0 # Usando GPIO0 como saída PWM
+
+
+# Display OLED I2C
+PINO_SDA = 2
+PINO_SCL = 3
+I2C_BUS = 1
+
+
+# Filtro de Média Móvel
+TAMANHO_AMOSTRAS = 10
+
+
+# Faixas de Operação do PWM
+FREQ_MIN = 100      # 100 Hz
+FREQ_MAX = 20000    # 20 kHz (20000 Hz)
+
+
+# ======================================================================
+
+
+# --- FUNÇÃO AUXILIAR DE MAPEAMENTO ---
+# Converte um valor de uma faixa para outra (Regra de três)
+def map_value(x, in_min, in_max, out_min, out_max):
+    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
+
+
+# --- INICIALIZAÇÃO ---
+
+
+# Display OLED
+i2c = machine.I2C(I2C_BUS, sda=machine.Pin(PINO_SDA), scl=machine.Pin(PINO_SCL), freq=400000)
+oled = SSD1306_I2C(128, 64, i2c)
+oled.fill(0)
+oled.text("PWM Control OK!", 0, 10)
+oled.show()
+time.sleep(1)
+
+
+# ADC para Raspberry Pi Pico
+adc_y = machine.ADC(machine.Pin(PINO_JOYSTICK_Y))
+adc_x = machine.ADC(machine.Pin(PINO_JOYSTICK_X))
+
+
+# PWM
+pwm_out = machine.PWM(machine.Pin(PINO_SAIDA_PWM))
+
+
+# Listas para o filtro de média móvel
+amostras_x = []
+amostras_y = []
+
+
+print("\n--- Iniciando controle PWM com o Joystick ---")
+
+
+# --- LOOP PRINCIPAL ---
+while True:
+    # 1. Leitura e filtragem dos valores do Joystick (igual ao anterior)
+    amostras_x.append(adc_x.read_u16())
+    amostras_y.append(adc_y.read_u16())
+
+
+    if len(amostras_x) > TAMANHO_AMOSTRAS:
+        amostras_x.pop(0)
+    if len(amostras_y) > TAMANHO_AMOSTRAS:
+        amostras_y.pop(0)
+
+
+    media_x_16bit = sum(amostras_x) / len(amostras_x)
+    media_y_16bit = sum(amostras_y) / len(amostras_y)
+
+
+    valor_x_12bit = int(media_x_16bit) >> 4
+    valor_y_12bit = int(media_y_16bit) >> 4
+
+
+    # 2. MAPEAMENTO DOS VALORES PARA O PWM
+    # Eixo Y controla a Frequência (100 Hz a 20 kHz)
+    # Invertemos o eixo Y (4095-valor) para que "para cima" seja maior frequência
+    frequencia = map_value(4095 - valor_y_12bit, 0, 4095, FREQ_MIN, FREQ_MAX)
+   
+    # Eixo X controla o Duty Cycle (0 a 65535)
+    duty_cycle_16bit = map_value(valor_x_12bit, 0, 4095, 0, 65535)
+
+
+    # 3. ATUALIZA A SAÍDA PWM
+    try:
+        # A frequência deve ser definida primeiro
+        pwm_out.freq(int(frequencia))
+        pwm_out.duty_u16(int(duty_cycle_16bit))
+    except ValueError:
+        # Proteção para caso a frequência seja 0 ou muito baixa, o que pode dar erro
+        pass
+
+
+    # 4. EXIBIÇÃO NO OLED
+    duty_percent = (valor_x_12bit / 4095) * 100
+
+
+    oled.fill(0)
+    oled.text("--- PWM OUT ---", 0, 0)
+    # Exibe a frequência em kHz se for maior que 1000 Hz para facilitar a leitura
+    if frequencia < 1000:
+        oled.text(f"Freq: {frequencia:.0f} Hz", 0, 20)
+    else:
+        oled.text(f"Freq: {frequencia/1000:.2f} kHz", 0, 20)
+       
+    oled.text(f"Duty: {duty_percent:.1f} %", 0, 40)
+    oled.show()
+   
+    time.sleep(0.1)
