@@ -1,0 +1,72 @@
+import machine
+import time
+
+
+try:
+    from ssd1306 import SSD1306_I2C
+    DRIVER_DISPONIVEL = True
+except ImportError:
+    DRIVER_DISPONIVEL = False
+
+
+# ======================================================================
+# --- CONFIGURAÇÃO FINAL ---
+# ======================================================================
+PINO_JOYSTICK_Y = 26
+PINO_JOYSTICK_X = 27
+
+
+# Configuração do Display que FUNCIONOU para você
+PINO_SDA = 2
+PINO_SCL = 3
+I2C_BUS = 1
+# ======================================================================
+
+
+# --- INICIALIZAÇÃO ---
+
+
+# Inicialização do Display (já sabemos que esta parte funciona)
+i2c = machine.I2C(I2C_BUS, sda=machine.Pin(PINO_SDA), scl=machine.Pin(PINO_SCL), freq=400000)
+oled = SSD1306_I2C(128, 64, i2c)
+oled.fill(0)
+oled.text("Sistema OK!", 0, 10)
+oled.show()
+time.sleep(1)
+
+
+# --- Configuração do ADC para RASPBERRY PI PICO ---
+# Não usamos .atten() ou .width() no Pico
+adc_y = machine.ADC(machine.Pin(PINO_JOYSTICK_Y))
+adc_x = machine.ADC(machine.Pin(PINO_JOYSTICK_X))
+
+
+print("\n--- Iniciando leitura do Joystick ---")
+
+
+# --- LOOP PRINCIPAL ---
+while True:
+    # 1. LEITURA NO MODO PADRÃO DO PICO (16-bit escalado)
+    leitura_x_16bit = adc_x.read_u16()
+    leitura_y_16bit = adc_y.read_u16()
+
+
+    # 2. CONVERSÃO DE VOLTA PARA A RESOLUÇÃO REAL DE 12-bit
+    # Esta é a maneira correta para o Pico
+    valor_x_12bit = leitura_x_16bit >> 4
+    valor_y_12bit = leitura_y_16bit >> 4
+   
+    # 3. CONVERSÃO PARA TENSÃO
+    tensao_x = (valor_x_12bit / 4095) * 3.3
+    tensao_y = (valor_y_12bit / 4095) * 3.3
+
+
+    # 4. EXIBIÇÃO DOS DADOS NO OLED
+    oled.fill(0)
+    oled.text(f"Eixo X ADC: {valor_x_12bit}", 0, 0)
+    oled.text(f"Eixo X V:   {tensao_x:.2f} V", 0, 10)
+    oled.text(f"Eixo Y ADC: {valor_y_12bit}", 0, 30)
+    oled.text(f"Eixo Y V:   {tensao_y:.2f} V", 0, 40)
+    oled.show()
+   
+    time.sleep(0.1)
